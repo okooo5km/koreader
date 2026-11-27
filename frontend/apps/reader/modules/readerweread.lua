@@ -244,7 +244,19 @@ function WeReadBar:buildTop()
     }
     -- 微信读书云端书：书名取书架上的书名（章节 EPUB 自带的标题是章名），多一个「微信读书」操作单入口
     local more_btn
-    if wrn then
+    local wro, WSkin = self:wereadOpen()
+    if wro then
+        more_btn = Tappable:new{
+            width = btn, height = h,
+            content = icon("wr.list", 46),
+            callback = function()
+                self:closeThen(function()
+                    local ok, err = pcall(WSkin.showReaderMore, wro)
+                    if not ok then require("logger").warn("weread showReaderMore failed", err) end
+                end)
+            end,
+        }
+    elseif wrn then
         more_btn = Tappable:new{
             width = btn, height = h,
             content = icon("wr.list", 46),
@@ -264,6 +276,8 @@ function WeReadBar:buildTop()
     if wrn then
         local ok, name = pcall(function() return wrn:shim().remote.book.title end)
         if ok and name and name ~= "" then title_text = name end
+    elseif wro and wro.book.title and wro.book.title ~= "" then
+        title_text = wro.book.title -- 单章 EPUB 的标题是「书名 - 章节名」，顶栏只要书名
     end
     local title = TextWidget:new{
         text = clean_title(title_text),
@@ -285,7 +299,9 @@ function WeReadBar:buildBottom()
     local vg = VerticalGroup:new{ align = "left", line(self.sw) }
     if self.panel == "progress" then
         local wrn = self:wereadNative()
-        table.insert(vg, wrn and self:buildWeReadProgressPanel(wrn) or self:buildProgressPanel())
+        local wro = not wrn and self:wereadOpen()
+        table.insert(vg, wrn and self:buildWeReadProgressPanel(wrn)
+            or wro and self:buildOpenWeReadProgressPanel(wro) or self:buildProgressPanel())
         table.insert(vg, line(self.sw, px(1)))
     elseif self.panel == "light" then
         table.insert(vg, self:buildLightPanel())
@@ -308,6 +324,15 @@ function WeReadBar:buildTabs()
                 self:closeThen(function()
                     local ok, err = pcall(function() wrn:owner():showToc() end)
                     if not ok then require("logger").warn("wrnative showToc failed", err) end
+                end)
+                return
+            end
+            local wro, WSkin = self:wereadOpen()
+            if wro then
+                -- 开源插件单章书：全书目录（本章加粗，点章节直接打开 / 下完即开）
+                self:closeThen(function()
+                    local ok, err = pcall(WSkin.showBookToc, wro)
+                    if not ok then require("logger").warn("weread showBookToc failed", err) end
                 end)
                 return
             end
@@ -509,6 +534,15 @@ function WeReadBar:wereadNative()
     if m and m:active() then return m end
 end
 
+-- 开源 weread.koplugin 按章下载的单章 EPUB：返回全书口径的上下文（见 wereadpluginskin.chapterContext），否则 nil
+function WeReadBar:wereadOpen()
+    if self:wereadNative() or not self.ui.weread then return nil end
+    local ok, Skin = pcall(require, "apps/filemanager/wereadpluginskin")
+    if not ok then return nil end
+    local okc, ctx = pcall(Skin.chapterContext, self.ui)
+    return okc and ctx or nil, Skin
+end
+
 -- 进度面板（全书口径）：页码 = 按字数估算的全书页码；点进度条 → 插件的全书跳转（可能跨章 → 换文档）
 function WeReadBar:buildWeReadProgressPanel(wrn)
     local shim, owner = wrn:shim(), wrn:owner()
@@ -577,6 +611,104 @@ function WeReadBar:buildWeReadProgressPanel(wrn)
         },
         self:buildStatsRow(self:weReadStatsText(wrn)),
     }
+end
+
+-- 开源插件单章书的进度面板（与 iReader 微信读书阅读页同一套）：
+-- 章节名 + 「约 x / y  z%」（全书页码按字数估算），进度条在本章内跳页，上一章 / 下一章跨章节换文档
+function WeReadBar:buildOpenWeReadProgressPanel(ctx)
+    local ui = self.ui
+    local Skin = require("apps/filemanager/wereadpluginskin")
+    local page = ui:getCurrentPage()
+    local pages = ui.document:getPageCount()
+    local okp, cur, total = pcall(Skin.chapterBookPages, ctx.plugin, ctx.file, page, pages)
+    if not (okp and cur and total) then cur, total = nil, nil end
+    local chapter = Skin.chapterTitle(ctx)
+    if chapter == "" then chapter = ui.toc:getTocTitleByPage(page) end
+
+    local inner = self.sw - 2 * self.pad
+    local side_w = px(170)
+    local bar_w = inner - 2 * side_w
+    self.progress_bar = Slider:new{
+        width = bar_w, height = px(110),
+        percentage = (page - 1) / math.max(1, pages - 1),
+    }
+    local bar_tap = Tappable:new{ width = bar_w, height = px(110), content = self.progress_bar }
+    bar_tap.onTap = function(_, _, ges)
+        local pct = self.progress_bar:getPercentageFromPosition(ges.pos)
+        if pct then
+            local p = math.max(1, math.min(pages, 1 + math.floor(pct * (pages - 1) + 0.5)))
+            if not self.orig_page then
+                self.orig_page = page
+                ui.link:addCurrentLocationToStack()
+            end
+            ui:handleEvent(Event:new("GotoPage", p))
+            self:rebuild()
+        end
+        return true
+    end
+    local function step(delta)
+        local target = ctx.idx + delta
+        if target < 1 or target > #ctx.chapters then
+            Notification:notify(delta < 0 and "已经是第一章" or "已经是最后一章", Notification.SOURCE_ALWAYS_SHOW)
+            return
+        end
+        self:closeThen(function()
+            local ok, err = pcall(Skin.openChapterAt, ctx, target)
+            if not ok then require("logger").warn("weread openChapterAt failed", err) end
+        end)
+    end
+    local prev_ch = Tappable:new{
+        width = side_w, height = px(110), align = "left",
+        content = TextWidget:new{ text = "上一章", face = face(32), fgcolor = ctx.idx > 1 and Blitbuffer.COLOR_BLACK or GRAY },
+        callback = function() step(-1) end,
+    }
+    local next_ch = Tappable:new{
+        width = side_w, height = px(110), align = "right",
+        content = TextWidget:new{ text = "下一章", face = face(32), fgcolor = ctx.idx < #ctx.chapters and Blitbuffer.COLOR_BLACK or GRAY },
+        callback = function() step(1) end,
+    }
+    local pct_text = cur and string.format("约 %d / %d   %.1f%%", cur, total, cur * 100 / total)
+        or string.format("第 %d / %d 章", ctx.idx, #ctx.chapters)
+    local info = HorizontalGroup:new{
+        align = "center",
+        LeftContainer:new{
+            dimen = Geom:new{ w = inner - px(340), h = px(70) },
+            TextWidget:new{ text = chapter, face = face(34, true), max_width = inner - px(360) },
+        },
+        RightContainer:new{
+            dimen = Geom:new{ w = px(340), h = px(70) },
+            TextWidget:new{ text = pct_text, face = face(28), fgcolor = GRAY },
+        },
+    }
+    local rows = VerticalGroup:new{
+        align = "left",
+        VerticalSpan:new{ width = px(26) },
+        HorizontalGroup:new{ HorizontalSpan:new{ width = self.pad }, info },
+        HorizontalGroup:new{
+            align = "center",
+            HorizontalSpan:new{ width = self.pad }, prev_ch, bar_tap, next_ch,
+        },
+    }
+    -- 底行：回到原页（本章内跳过才出现）+ 全书目录
+    local actions = HorizontalGroup:new{ align = "center", HorizontalSpan:new{ width = self.pad } }
+    if self.orig_page and self.orig_page ~= page then
+        local orig = self.orig_page
+        table.insert(actions, chip(string.format("回到第 %d 页", orig), px(300), px(76), false, function()
+            self.orig_page = nil
+            ui:handleEvent(Event:new("GotoPage", orig))
+            self:rebuild()
+        end, 28))
+        table.insert(actions, HorizontalSpan:new{ width = px(20) })
+    end
+    table.insert(actions, chip("全书目录", px(220), px(76), false, function()
+        self:closeThen(function()
+            local ok, err = pcall(Skin.showBookToc, ctx)
+            if not ok then require("logger").warn("weread showBookToc failed", err) end
+        end)
+    end, 28))
+    table.insert(rows, actions)
+    table.insert(rows, self:buildStatsRow(self:localStatsText()))
+    return rows
 end
 
 ---------------------------------- 进度面板 ----------------------------------

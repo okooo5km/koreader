@@ -179,6 +179,13 @@ footerTextGeneratorMap = {
     end,
     battery = function(footer)
         local symbol_type = footer.settings.item_prefix
+        -- iReader: 电量一律是「⚡85%」：小闪电 + 百分比（「B:」字母前缀看不出是电量，电池图标又太大）。
+        -- ⚡ 在 KOReader 自带的 nerdfonts/symbols.ttf 里（字体回退链第 3 位），不依赖额外字体。其它项仍按 item_prefix
+        if symbol_type == "letters" then
+            local lvl = Device:hasBattery() and Device:getPowerDevice():getCapacity() or 0
+            if footer.settings.all_at_once and lvl > footer.settings.battery_hide_threshold then return "" end
+            return "⚡" .. lvl .. "%"
+        end
         local prefix = symbol_prefix[symbol_type].battery
         local powerd = Device:getPowerDevice()
         local batt_lvl = 0
@@ -533,7 +540,7 @@ ReaderFooter.default_settings = {
     pages_left_book = false,
     time = true,
     pages_left = false,
-    battery = false,
+    battery = true, -- iReader: 右下角时间左侧，⚡ + 百分比
     battery_hide_threshold = Device:hasAuxBattery() and 200 or 100,
     percentage = false,
     book_time_to_read = false,
@@ -546,8 +553,8 @@ ReaderFooter.default_settings = {
     book_title = false,
     book_chapter = true,
     dynamic_filler = true,
-    -- iReader: 左章节名 …… 右 时间 页码
-    order = { [0] = "off", "book_chapter", "dynamic_filler", "time", "page_progress" },
+    -- iReader: 左章节名 …… 右 电量 时间 页码
+    order = { [0] = "off", "book_chapter", "dynamic_filler", "battery", "time", "page_progress" },
     bookmark_count = false,
     chapter_progress = false,
     item_prefix = "letters",
@@ -580,7 +587,17 @@ ReaderFooter.default_settings = {
     invert_progress_direction = false,
 }
 
+-- iReader: 页脚布局版本。设备上只要存过 footer 表（用过官方 KOReader、或在菜单里改过页脚），
+-- 代码默认值就完全不生效，装上本界面后页脚还是官方那条进度条。版本号变了就把 footer 换成本界面默认值、
+-- 清掉显示模式（一次性；之后用户在菜单里的改动照常保存）。改页脚默认值时把这个数加一。
+local FOOTER_LAYOUT = 3
+
 function ReaderFooter:init()
+    if G_reader_settings:readSetting("ireader_footer_layout") ~= FOOTER_LAYOUT then
+        G_reader_settings:saveSetting("footer", util.tableDeepCopy(self.default_settings))
+        G_reader_settings:delSetting("reader_footer_mode")
+        G_reader_settings:saveSetting("ireader_footer_layout", FOOTER_LAYOUT)
+    end
     self.settings = G_reader_settings:readSetting("footer", self.default_settings)
 
     self.additional_footer_content = {} -- array, where additional header content can be inserted.

@@ -30,9 +30,9 @@ local Shelf = {}
 function Shelf.lastBook()
     local ReadHistory = require("readhistory")
     for _, item in ipairs(ReadHistory.hist or {}) do
-        -- 旧 weread.koplugin（开源版，已停用）的单章缓存不再算在读
-        -- （分享版没有微信读书集成，不过滤这两类路径）
-        if item.file and (not IFeatures.weread() or (not item.file:find("/weread/cache/", 1, true)
+        -- 微信读书的单章缓存不算本机在读（它们在「微信读书」页有自己的继续阅读卡）
+        -- （没有任何微信读书时不过滤这两类路径）
+        if item.file and (not IFeatures.anyWeread() or (not item.file:find("/weread/cache/", 1, true)
                 and not item.file:find("/wereader-cloud/", 1, true)))
                 and lfs.attributes(item.file, "mode") == "file" then
             return item.file
@@ -54,7 +54,7 @@ end
 -- 读书桌面（Books.java）用同一套文件和口径，两边改动要同步。
 -- 返回 nil 或 { title, author, cover_path, pct(0~1 整书), finished }
 function Shelf.wereadInfo(file)
-    if not IFeatures.weread() then return nil end
+    if not IFeatures.anyWeread() then return nil end
     local root, id = file:match("^(.*)/weread/cache/([^/]+)/[^/]+$")
     if not id then return nil end
     local dir = root .. "/weread/cache/" .. id .. "/"
@@ -320,26 +320,53 @@ function Shelf.sourceTabs(opds, selected, on_select)
     if opds then
         table.insert(tabs, { text = "全部", selected = selected == "all", callback = function() on_select("all") end })
     end
+    -- 「微信读书」标签：一律放在右上角第一个
+    -- iReader 完整版用闭源 wereader（打开我们画的云端书架）；其余（Kindle / 分享版）用开源 weread.koplugin
+    -- （打开插件书架，界面由 wereadpluginskin 换皮）
+    local provider = require("ireader/target").wereadProvider()
+    if (provider == "wereader" and IFeatures.weread() and require("apps/filemanager/wereaderdata").installed())
+            or (provider == "weread" and Shelf.weReadHost(opds)) then
+        table.insert(tabs, 1, { text = "微信读书", selected = selected == "weread", callback = function()
+            on_select("weread")
+        end })
+    end
     return tabs
 end
 
 -- 来源标签统一处理：local=本机书架 / weread=微信读书书架 / 其余=OPDS 书库
 function Shelf.onSourceTab(fm, key)
-    -- 分享版没有 wereadhome（首页切页）：没有叠加页可切 / 可关
+    Shelf.rememberSource(key)
+    -- 没有闭源集成时没有 wereadhome（首页切页）：没有叠加页可切 / 可关
     local Home = IFeatures.weread() and require("apps/filemanager/wereadhome") or nil
     if key == "local" then
         if Home then Home.switchTo("local", fm) end
     elseif key == "weread" then
-        if not Home then return end
         if require("ireader/target").wereadProvider() == "weread" then
             Shelf.openWeRead(fm)
-        else
+        elseif Home then
             Home.switchTo("weread", fm)
         end
     else
         if Home then Home.closePage() end
         if fm and fm.opds then fm.opds:onShowOPDSCatalog(key ~= "all" and key or nil) end
     end
+end
+
+-- 开源插件：记住上次停在哪个来源（weread / 其它），书架重建（开机、关书）时据此决定先落在哪一页
+local SOURCE_KEY = "ireader_shelf_source"
+function Shelf.rememberSource(key)
+    if require("ireader/target").wereadProvider() ~= "weread" then return end
+    local v = key == "weread" and "weread" or "local"
+    if G_reader_settings:readSetting(SOURCE_KEY) ~= v then G_reader_settings:saveSetting(SOURCE_KEY, v) end
+end
+
+-- 书架建好后调用：上次停在「微信读书」（默认就是它）且已登录，就直接打开微信读书书架
+function Shelf.openDefaultWeRead(fm)
+    if require("ireader/target").wereadProvider() ~= "weread" then return end
+    if G_reader_settings:readSetting(SOURCE_KEY, "weread") ~= "weread" then return end
+    local plugin = fm and fm.weread
+    local ok, logged = pcall(function() return plugin.settings:is_api_configured() end)
+    if ok and logged then Shelf.openWeRead(fm) end
 end
 
 -- 开源 weread.koplugin 挂在 FileManager.weread 上

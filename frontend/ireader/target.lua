@@ -42,12 +42,12 @@ function T.hasPlugin(name)
     return found
 end
 
--- 微信读书由哪个插件提供："wereader"（闭源）| "weread"（开源）| nil
+-- 微信读书由哪个插件提供："wereader"（闭源，仅 iReader 完整版）| "weread"（开源 weread.koplugin）| nil
+-- 开源插件随分享版 / Kindle 覆盖包一起分发（plugins/weread.koplugin）；iReader 完整版不打包它（build_apk.sh 排除）
 function T.wereadProvider()
-    -- 分享版不带微信读书集成：一律没有提供方（见 ireader/features.lua）
-    if not require("ireader/features").weread() then return nil end
-    if T.isIReader() then return "wereader" end
-    if T.isKindle() then return "weread" end
+    local F = require("ireader/features")
+    if T.isIReader() and F.weread() then return "wereader" end
+    if F.wereadSkin() and T.hasPlugin("weread") then return "weread" end
     return nil
 end
 

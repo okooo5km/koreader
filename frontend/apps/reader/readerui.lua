@@ -513,7 +513,7 @@ function ReaderUI:init()
         end
     end
     -- iReader: 微信读书插件书架换皮
-    if self.weread and IFeatures.weread() then
+    if self.weread and IFeatures.wereadSkin() then
         pcall(function() require("apps/filemanager/wereadpluginskin").apply(self.weread) end)
     end
 

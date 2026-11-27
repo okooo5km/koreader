@@ -82,7 +82,20 @@ for a in d.get('assets', []):
 fi
 [ -f "$OV/reader.lua" ] && [ -d "$OV/frontend" ] || { echo "覆盖内容不完整（缺 koreader/reader.lua 或 frontend/）"; exit 1; }
 if find "$OV" -name 'wereader*' -o -name 'gohomeflag*' | grep -q .; then
-  echo "覆盖内容里有微信读书集成文件，这不是给分享用的版本，停止"; exit 1
+  echo "覆盖内容里有闭源微信读书集成文件，这不是给分享用的版本，停止"; exit 1
+fi
+# 覆盖包只能是代码：不许带设置、阅读历史、插件缓存（登录信息都在 settings/ 里）
+if find "$OV" \( -path '*/settings/*' -o -name 'settings.reader.lua' -o -name 'history.lua' -o -path '*/weread/cache/*' \) | grep -q .; then
+  echo "覆盖内容里有设置或账号数据，停止"; exit 1
+fi
+
+# 开源微信读书插件 weread.koplugin：Kindle 上已经有（用户自己装的、或插件自更新过）就保留原样，不降级
+PLUGIN_EXCLUDE=()
+if [ -d "$K/koreader/plugins/weread.koplugin" ] && [ -d "$OV/plugins/weread.koplugin" ]; then
+  have="$(sed -n 's/.*version = "\([^"]*\)".*/\1/p' "$K/koreader/plugins/weread.koplugin/main.lua" | head -1)"
+  ours="$(sed -n 's/.*version = "\([^"]*\)".*/\1/p' "$OV/plugins/weread.koplugin/main.lua" | head -1)"
+  echo "==> Kindle 上已有微信读书插件 ${have:-?}（覆盖包里是 ${ours:-?}），保留 Kindle 上的"
+  PLUGIN_EXCLUDE=(--exclude '/weread.koplugin')
 fi
 
 B="$HOME/kindle-koreader-backups/ui-before-$(date +%Y%m%d-%H%M%S)"
@@ -96,9 +109,10 @@ for f in defaults.lua reader.lua; do
 done
 
 echo "==> 覆盖到 $K/koreader"
-for part in frontend plugins resources; do
+for part in frontend resources; do
   rsync -a "$OV/$part/" "$K/koreader/$part/"
 done
+rsync -a "${PLUGIN_EXCLUDE[@]+"${PLUGIN_EXCLUDE[@]}"}" "$OV/plugins/" "$K/koreader/plugins/"
 cp "$OV/defaults.lua" "$OV/reader.lua" "$K/koreader/"
 command -v dot_clean >/dev/null && dot_clean -m "$K" || true
 find "$K/koreader" -name '._*' -delete 2>/dev/null || true
@@ -107,7 +121,8 @@ sync
 # 逐个比对：Kindle 上多出来的文件（原有插件等）不算差异
 diffs=""
 for part in frontend plugins resources; do
-  diffs="$diffs$(diff -rq "$OV/$part" "$K/koreader/$part" 2>&1 | grep -v "^Only in $K" || true)"
+  diffs="$diffs$(diff -rq "$OV/$part" "$K/koreader/$part" 2>&1 | grep -v "^Only in $K" \
+    | { [ ${#PLUGIN_EXCLUDE[@]} -gt 0 ] && grep -v "weread.koplugin" || cat; } || true)"
 done
 cmp -s "$OV/reader.lua" "$K/koreader/reader.lua" || diffs="$diffs reader.lua 不一致"
 if [ -n "$diffs" ]; then
@@ -118,3 +133,4 @@ fi
 echo "==> 完成，文件已逐个比对一致"
 echo "回退：bash $(cd "$(dirname "$0")" && pwd)/ui_rollback.sh \"$K\" \"$B\""
 echo "下一步：弹出并拔线，再从启动入口打开 KOReader。"
+echo "微信读书：书架右上角第一个标签。包里不带任何账号，要用就在 Kindle 上按登录页提示扫码登录。"

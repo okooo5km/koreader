@@ -467,7 +467,7 @@ function FileManager:init()
         end
     end
     -- iReader: 微信读书插件书架换皮（插件缺失/接口变了就保持原样）
-    if self.weread and IFeatures.weread() then
+    if self.weread and IFeatures.wereadSkin() then
         pcall(function() require("apps/filemanager/wereadpluginskin").apply(self.weread) end)
     end
 
@@ -481,7 +481,6 @@ function FileManager:init()
             if FileManager.instance == self then require("apps/filemanager/wereadhome").openDefaultShelf(self) end
         end)
     end
-
     for _, v in ipairs(self.postInitCallback) do
         v()
     end
@@ -1415,6 +1414,11 @@ function FileManager:showFiles(path, focused_file, selected_files)
         selected_files = selected_files,
     }
     UIManager:show(file_manager)
+    -- 开源 weread.koplugin（Kindle / 分享版）：上次停在「微信读书」且已登录，就直接落在微信读书书架。
+    -- 必须和书架窗口在同一轮里同步打开：放到 nextTick 会先画一帧「本机」再盖上来（关书时会闪一下）
+    if IFeatures.wereadSkin() and file_manager.weread then
+        pcall(function() require("apps/filemanager/wereadshelf").openDefaultWeRead(file_manager) end)
+    end
 end
 
 --- A shortcut to execute mv.

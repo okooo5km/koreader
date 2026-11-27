@@ -112,6 +112,8 @@ bash scripts/ui_install.sh <Kindle 挂载路径>
 
 脚本会：确认 Kindle 上的 KOReader 是 v2026.07.1；备份现有的 `koreader/frontend`、`plugins`、`resources`、`defaults.lua`、`reader.lua` 到电脑的 `~/kindle-koreader-backups/<时间>/`；从本仓库取界面文件（优先用仓库 Release 里的 Kindle 覆盖包，没有就浅克隆仓库现场组装）；不带 `--delete` 地覆盖进去，保留 Kindle 原有插件；最后清理 macOS 的 `._` 文件并逐个比对。
 
+覆盖包里带开源微信读书插件 weread.koplugin（书架右上角第一个标签「微信读书」），**不带任何账号信息**。用户要用的话，在 Kindle 上点「微信读书」标签，按登录页提示扫码登录（先在手机微信读书「我 › 设置 › 微信读书 Skill」里获取 API Key；手机确认页要勾选「自动退出登录」，否则 Kindle 报 HTTP 401）；扫码需要临时开 Wi-Fi。不要替用户扫码，也不要从别的设备拷 `settings/weread.lua` 过来。
+
 覆盖完让用户**拔线**，再从启动入口打开 KOReader。推完文件后 KOReader 打不开、而 `koreader/crash.log` 里没有新的 `launching...` 行，说明它根本没被拉起：拔线后重启 Kindle 再试，不是界面坏了。
 
 界面包含什么、在哪些机型上验证过，见 `references/ui-overview.md`。
@@ -124,7 +126,7 @@ bash scripts/ui_install.sh <Kindle 挂载路径>
 
 ## 阶段 8：验证与交接
 
-逐项确认：KOReader 能从启动入口打开；书架、阅读工具栏（点屏幕中央）、长按选词都正常；Jobman 或 Legacy 方式下更新确实被屏蔽。然后告诉用户：
+逐项确认：KOReader 能从启动入口打开；书架、阅读工具栏（点屏幕中央）、长按选词都正常；书架右上角第一个标签是「微信读书」，点开能看到登录页（用户登录后能看到书架）；Jobman 或 Legacy 方式下更新确实被屏蔽。然后告诉用户：
 
 - 平时尽量保持飞行模式，只在需要时开 Wi-Fi。
 - 改 KOReader 设置文件、拷书之前先退出 KOReader。
